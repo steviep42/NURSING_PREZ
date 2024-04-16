@@ -376,6 +376,144 @@ use **rvest** to get that info. This can many times be a trial-and-error
 thing but if you use the the XPath plugin for your browser it becomes
 easier.
 
+```{r}
+library(tidyverse)
+library(lubridate)
+library(rvest)
+
+url <- "https://www.fda.gov/drugs/novel-drug-approvals-fda/novel-drug-approvals-2015"
+init <- read_html(url)
+fda <- read_html(url) %>% 
+  html_table() 
+
+fda <- do.call(rbind,fda)
+names(fda) <- c("No","Name","Active_Ingredient","Date","Approved_Use")
+fda$Date <- mdy(fda$Date)
+```
+
+Let's see how many were processed/approved in each month of the year. I
+don't think there is any discernable patterm here. It does look like
+more were approved in the second part of the year but that might be
+conincidence.
+
+```{r}
+fda %>% 
+  mutate(Months=months(Date,abbreviate=T)) %>%
+  mutate(Months=factor(Months,level=month.abb)) %>%
+  ggplot(aes(x=Months)) + geom_bar() +
+  labs(x="Month",y="Number of Approved Drugs",title="Number of Approved Drugs / Month in Year 2015",
+       caption="https://www.fda.gov/drugs/novel-drug-approvals-fda/novel-drug-approvals-2015") +
+  theme_bw()
+```
+
+
+So one good practice to adopt in your programming is to turn working code into a function. We could do this with the code to get the table and turn it into a data frame. So, given a URL, we can get the table of interest from it. It's pretty easy here to do that. One thing that we know is that the FDA URL looks like this:
+
+
+```         
+https://www.fda.gov/drugs/novel-drug-approvals-fda/novel-drug-approvals-2015
+```
+
+If we look at that page we can see that there are other years with drug approvals all the way up to 2024. The only thing that changes in the URL is the last 4 digits. So we can assume a common stem of:
+
+```         
+https://www.fda.gov/drugs/novel-drug-approvals-fda/novel-drug-approvals-
+```
+
+which we will use inside our function. We'll pass only the year of interest to the function - in this case 2015.
+
+```{r}
+fda_get <- function(year=2015) {
+#
+# INPUT: year - a valid year for the FDA Drug site
+# OUTPUT: A data frame or tibble represented the table found on the site
+
+  url <- "https://www.fda.gov/drugs/novel-drug-approvals-fda/novel-drug-approvals-"
+  url <- paste(url,year,sep="")
+  
+  fda <- read_html(url) %>% 
+  html_table() 
+
+  fda <- do.call(rbind,fda)
+  names(fda) <- c("No","Name","Active_Ingredient","Date","Approved_Use")
+  fda$Date <- mdy(fda$Date)
+
+  return(fda)
+}
+```
+
+
+So now we have a function we can call. Let's make sure it works
+
+```{r}
+yr_2015 <- fda_get(2015)
+head(yr_2015)
+```
+
+Plot it like before:
+
+```{r}
+yr_2015 %>% 
+  mutate(Months=months(Date,abbreviate=T)) %>%
+  mutate(Months=factor(Months,level=month.abb)) %>%
+  ggplot(aes(x=Months)) + geom_bar() +
+  labs(x="Month",y="Number of Approved Drugs",title="Number of Approved Drugs / Month in Year 2015",
+       caption="https://www.fda.gov/drugs/novel-drug-approvals-fda/novel-drug-approvals-2015") +
+  theme_bw()
+```
+
+We could turn the plotting code into a function for generality.
+
+```{r}
+fda_bar <- function(df=fda_df) {
+  Year <- year(df$Date[1])
+  df %>% 
+    mutate(Months=months(Date,abbreviate=T)) %>%
+    mutate(Months=factor(Months,level=month.abb)) %>%
+    ggplot(aes(x=Months)) + geom_bar() +
+    labs(x="Month",y="Number of Approved Drugs",
+         title=paste("Number of Approved Drugs / Month in Year",Year),
+         caption=paste0("https://www.fda.gov/drugs/novel-drug-approvals-fda/novel-drug-approvals-",Year)) +
+    theme_bw()
+}
+```
+
+
+```{r}
+fda_bar(yr_2015)
+```
+
+Will it work for another year?
+
+```{r}
+yr_2016 <- fda_get(2016)
+fda_bar(yr_2016)
+```
+
+```{r}
+fda_bar(fda_get(2017))
+```
+
+Well this is great but let's go ahead and get all the approved drugs for all available years. it turns out that there is a problem with the table for 2020 so we will ignore that one for a while. We can use a little **apply** magic from R to leverage our **fda_get** function:
+
+```{r}
+all_fda <- do.call(rbind,lapply(c(2015:2019,2021:2024),fda_get))
+```
+
+```{r}
+all_fda %>% 
+    filter(complete.cases(.)) %>%
+    mutate(Months=months(Date,abbreviate=T)) %>%
+    mutate(Months=factor(Months,level=month.abb)) %>%
+    mutate(Year=as.character(year(Date))) %>% 
+    ggplot(aes(x=Months,fill=Year)) + geom_bar() +
+    labs(x="Month",y="Number of Approved Drugs",
+         title=paste("Number of Approved Drugs / Month in Year",Year)) +
+    theme_bw()
+```
+
+
+
 ## PubMed
 
 Pubmed provides a rich source of information on published scientific
@@ -668,12 +806,11 @@ word_vec[1:30]
 ## Tidy Text
 
 So the tidytext package provides some accomodations to convert your body
-of text into individual **tokens**
-which then simplfies the removal of less meaningful words and the
-creation of word frequency counts. The first thing you do is to create a
-data frame where the there is one line for each body of text. In this
-case we have only one long string of text this will be a one line data
-frame.
+of text into individual **tokens** which then simplfies the removal of
+less meaningful words and the creation of word frequency counts. The
+first thing you do is to create a data frame where the there is one line
+for each body of text. In this case we have only one long string of text
+this will be a one line data frame.
 
 ```{r}
 library(tidytext)
@@ -897,7 +1034,7 @@ tidy_text_nonum %>%
   with(wordcloud(word,n,max.words=90,scale=c(4,.5),colors=brewer.pal(8,"Dark2")))
 ```
 
-##  BiGrams
+## BiGrams
 
 Let’s look at bigrams. We need to go back to the cleaned abstracts and
 pair words to get phrase that might be suggestive of some sentiment
@@ -1003,5 +1140,5 @@ kd_top_terms %>%
   scale_y_reordered()
 ```
 
-```{}
+```         
 ```
