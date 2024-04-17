@@ -30,6 +30,10 @@ ownership or direction. So today's code might work well today but
 perhaps not in a month's time! Such is the nature of scraping web data
 programmatically.
 
+```
+https://www.33rdsquare.com/is-web-scraping-legal/
+```
+
 Some basic lessons here are that when searching the web for data
 intended for use with R you should always see if there is an approved
 API or package BEFORE resorting to web scraping. Check the Task Views
@@ -86,6 +90,8 @@ underlies the web.
 library(rvest)
 minimal_html("<p>This is a paragraph</p>
                <table>
+                  <tr><td>Hi</td><td>There</td></tr>
+                  <tr><td>Hi</td><td>There</td></tr>
                   <tr><td>Hi</td><td>There</td></tr>
                </table>")
 ```
@@ -390,6 +396,7 @@ fda <- do.call(rbind,fda)
 names(fda) <- c("No","Name","Active_Ingredient","Date","Approved_Use")
 fda$Date <- mdy(fda$Date)
 ```
+### How Many Approvals in 2015 ?
 
 Let's see how many were processed/approved in each month of the year. I
 don't think there is any discernable patterm here. It does look like
@@ -406,6 +413,7 @@ fda %>%
   theme_bw()
 ```
 
+### Create a Function 
 
 So one good practice to adopt in your programming is to turn working code into a function. We could do this with the code to get the table and turn it into a data frame. So, given a URL, we can get the table of interest from it. It's pretty easy here to do that. One thing that we know is that the FDA URL looks like this:
 
@@ -494,6 +502,8 @@ fda_bar(yr_2016)
 fda_bar(fda_get(2017))
 ```
 
+### Generalize the Code to All Years
+
 Well this is great but let's go ahead and get all the approved drugs for all available years. it turns out that there is a problem with the table for 2020 so we will ignore that one for a while. We can use a little **apply** magic from R to leverage our **fda_get** function:
 
 ```{r}
@@ -511,7 +521,118 @@ all_fda %>%
          title=paste("Number of Approved Drugs / Month in Year",Year)) +
     theme_bw()
 ```
+### Get Drug Trial Snapshot Information
 
+So let's take this farther by getting the Drug Trial links in the 5th column of 
+the web page of interest. The process as a whole isn't going to be pretty because it 
+requires experience with regular expressions, string manipulation and XML concepts but 
+it's entirely doable. This is a "real life" example. Not every scraping task will get this involved. 
+
+First, using the approved drug table on the link, we'll create a data frame with the name of the drug as well as the clinical trials info associated with it
+
+```{r}
+fda_get2 <- function(year=2015) {
+
+  url <- "https://www.fda.gov/drugs/novel-drug-approvals-fda/novel-drug-approvals-"
+  url <- paste(url,year,sep="")
+  
+  fda <- read_html(url) %>% 
+    html_nodes("table tr td:nth-child(5) a") %>%  
+    html_attr("href")
+
+  # Extract the part after "snapshot" using regular expressions
+  snapshot_info <- gsub('.*snapshot[s]?-(.*)', '\\1', fda)
+
+  # We'll need the full link for later parsing
+  full_links <- paste("https://www.fda.gov",fda,sep="")
+
+  # Create a data frame with the extracted part and the entire link
+  fda <- data.frame(
+                    Snapshot_Info = snapshot_info,
+                    Full_Link = full_links
+                    )
+  return(fda)
+}
+```
+
+So actually get the info. In this case just for the year 2015
+
+```{r}
+fda_links <- fda_get2()
+head(fda_links)
+```
+
+So now that we have a data frame of drug names and a link to the clinical trials info we can perhaps loop over every row in the data frame to get more information about each drug. We can also normalize the drug name to be uppercase.
+
+
+```{r}
+drug_names <- vector()
+
+# Loop through all the links
+for (ii in 1:nrow(fda_links)) {
+  
+  # Read the links
+  doc <- read_html(fda_links[ii,2])
+  
+  # Get the drug header line
+  drug_name <- doc %>% 
+    html_elements(xpath="/html/body/div[2]/div[1]/div/main/article/header/section/div/h1") %>%     html_text()
+  
+  # We have to parse out the actual name from a larger string.
+  drug_name <- trimws(strsplit(drug_name,":")[[1]][2])
+
+  # More "word" surgery  
+  first_word <- toupper(strsplit(drug_name," ")[[1]][1])
+
+  # Stash the name in a vector
+  
+  drug_names[ii] <- first_word
+}
+
+drug_names
+```
+
+Now let's get an amplified description of what each drug is for. We do this by using 
+rvest to "read" the URL and pick out the information under the "What is This Drug For"
+heading on the page. We'll just extract the first paragraph.
+
+```{r}
+#Set up an empty vector into which we will put the descriptions
+descriptions <- vector()
+
+# Like above, let's loop through all the links we parsed earlier
+for (ii in 1:nrow(fda_links)) {
+  
+  # 'Read' the link
+  doc <- read_html(fda_links[ii,2])
+  
+  # We can use some XML magic to get the first paragraph after the heading of interest
+  first_paragraph <- doc %>% 
+    html_nodes(
+      xpath = "/html/body/div[2]/div[1]/div/main/article/div/h4[1]/following-sibling::p[1]"
+      ) %>% 
+    html_text()
+    
+  descriptions[ii] <- first_paragraph
+}
+
+```
+
+Let's check out the descriptions
+```{r}
+cat(descriptions[1:5],sep=" \n\n")
+```
+
+So now we could create a data frame for later processing
+
+```{r}
+drug_descriptions <- tibble(name=drug_names,
+                            description=descriptions)
+drug_descriptions
+```
+
+So now you are ready to begin applying some of the techniques described below for doing something like Topic Analysis. You would also probably need to use the above code segments
+to create a function to get all the info available for multiple years of approved drugs. The above example is just for the year 2015. But the hard work is done. 
 
 
 ## PubMed
